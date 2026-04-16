@@ -41,7 +41,7 @@ def do_masking(data):
     data1[0,0,half_y-10:half_y+10,half_x-10:half_x+10]=data[0,0,half_y-10:half_y+10,half_x-10:half_x+10]
     return data1
     
-def deconvolve(residual, model, psf,threshold,max_iterations=100,mgain=0.2):
+def deconvolve(residual, model, psf,threshold,max_iterations=50,mgain=0.1):
     nchan, npol, height, width = residual.shape
     
 
@@ -106,8 +106,9 @@ shift_cor=img_corr(forward_transform_image,\
 
 shift_cor.imagename='test_simulated_single_source_wsclean_self'
 shift_cor.final_image="test_self_major_minor_mgain_0.2"
-shift_cor.max_major_cycle=20
-shift_cor.threshold=0.02
+shift_cor.max_major_cycle=30
+shift_cor.threshold=0.005
+shift_cor.do_continue=True
 
 shift_cor.image_with_shift_correction()
     

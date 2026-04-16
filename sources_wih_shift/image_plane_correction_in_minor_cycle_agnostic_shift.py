@@ -20,6 +20,7 @@ class image_plane_correction_minor_cycle():
         self.deconvolution_function=deconvolution_function
         self.imsize=512
         self.cell=0.5  ###arcsec
+        self.do_continue=False
 
         
     def get_residual(self,imagename):
@@ -49,23 +50,24 @@ class image_plane_correction_minor_cycle():
 
         j=0
 
-        self.create_dirty_image_all_times()
+        if not self.do_continue:
+            self.create_dirty_image_all_times()
 
-        command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required -size {self.imsize} {self.imsize} -scale {self.cell}arcsec -niter 10 '+\
-                            f'-name {self.final_image} {self.msname}'
-        os.system(command_str)
-        self.blank_image(self.final_image+"-model.fits")
+            command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required -size {self.imsize} {self.imsize} -scale {self.cell}arcsec -niter 10 '+\
+                                f'-name {self.final_image} {self.msname}'
+            os.system(command_str)
+            self.blank_image(self.final_image+"-model.fits")
 
         while True:
             peak_val1=[]
             for num_interval,interval in enumerate(self.intervals):
                 imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)
-                if j==0:
+                if j==0 and not self.do_continue:
                     continue1=''
                 else:
                     continue1=' -continue'
                 
-                if j==0:
+                if j==0 and not self.do_continue:
                     ###Creating dummy image. I am using very small iter to create the basic image structures. I set the model to 0, and residual to dirty image
                     ### before passing it to the minor cycle.
                     command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -scale {self.cell}arcsec '+\
@@ -84,9 +86,19 @@ class image_plane_correction_minor_cycle():
                     os.system(command_str)
                     self.copy_dirty_image_to_residual(imagename_tim)
             
+            #fig,ax=plt.subplots(nrows=1,ncols=3,sharex=True,sharey=True)
+            #for num_interval,interval in enumerate(self.intervals):
+            #    data=fits.getdata(self.imagename+"-"+str(num_interval).zfill(4)+"-residual.fits")
+            #    im=ax[num_interval].imshow(data[0,0,:,:],origin='lower')
+            #    plt.colorbar(im,ax=ax[num_interval])
             
-            max_residual_value=self.do_minor_cycle()
             
+            
+            max_residual_value,residual=self.do_minor_cycle()
+            
+            #im=ax[2].imshow(residual[0,0,:,:],origin='lower')
+            #plt.colorbar(im,ax=ax[2])
+            #plt.show()
             
             for num_interval,interval in enumerate(self.intervals):
                 imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)   
@@ -135,7 +147,7 @@ class image_plane_correction_minor_cycle():
 
         self.update_model_image(self.final_image+"-model.fits",result['model'])
         
-        return np.nanmax(np.abs(result['residual']))
+        return np.nanmax(np.abs(result['residual'])),result['residual']
     
     def create_final_image(self):
         num_chunks=len(self.intervals)
@@ -187,6 +199,8 @@ class image_plane_correction_minor_cycle():
         with fits.open(imagename,mode='update') as hdul:
             hdul[0].data[...]=dirty_data
             hdul.flush()
+        
+        
         return
     
     @staticmethod    
