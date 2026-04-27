@@ -11,6 +11,7 @@ import json
 import tkinter as tk
 from tkinter import filedialog
 
+
     
 class image_plane_correction_minor_cycle():
     def __init__(self,forward_transform,backward_transform,msname,ref_time_isot,maskfile=None):
@@ -237,6 +238,7 @@ class image_plane_correction_minor_cycle():
             plt.show()
             
             self.mask=np.expand_dims(create_mask.full_mask,axis=(0,1))
+            self.interactive=create_mask.interactive
         elif not hasattr(self,'mask'):
             self.mask=np.ones(residual.shape,dtype=bool)
         elif self.mask.shape!=residual.shape:
@@ -302,6 +304,7 @@ class MaskingSelector:
     def __init__(self, data):
         self.data = data
         self.full_mask = np.zeros(self.data.shape, dtype=bool)
+        self.interactive=True
         self.fig, (self.ax_src, self.ax_mask) = plt.subplots(1, 2, figsize=(12, 6),sharex=True,sharey=True)
         self.ax_src.imshow(data, cmap='gray')
         self.ax_mask.set_title("Masked Result")
@@ -348,6 +351,13 @@ class MaskingSelector:
 
         self.btn_save_patch.on_clicked(self.save_selections)
         self.btn_load_patch.on_clicked(self.load_selections)
+        
+        ax_noninteractive_patch = plt.axes([0.9, 0.05, 0.08, 0.075])
+        self.btn_noninteractive_patch = Button(ax_noninteractive_patch, 'Non-interactive')
+        self.btn_noninteractive_patch.on_clicked(self.go_noninteractive)
+        
+    def go_noninteractive(self, event=None):
+        self.interactive=False
 
     def on_select(self, eclick, erelease):
         width = abs(erelease.xdata - eclick.xdata)
@@ -385,7 +395,7 @@ class MaskingSelector:
             self.full_mask |= grid_mask # Combine masks with OR
 
         # Mask the data: keep original where mask is True, else 0 (or NaN)
-        masked_data = np.where(self.full_mask, self.data, 0)
+        masked_data = np.where(self.full_mask, self.data, np.nan)
         
         self.ax_mask.imshow(masked_data, cmap='gray')
         self.fig.canvas.draw_idle()
