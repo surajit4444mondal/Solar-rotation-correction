@@ -30,6 +30,7 @@ class image_plane_correction_minor_cycle():
         self.max_iterations=50
         self.mgain=0.1
         self.interactive=True
+        self.pol='I'
         if maskfile:
             self.mask=np.load(maskfile)
         self.mask_class=MaskingSelector
@@ -51,7 +52,7 @@ class image_plane_correction_minor_cycle():
     def create_dirty_image_all_times(self):
 
         command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required -size {self.imsize} {self.imsize} -scale {self.cell}arcsec -niter 10 '+\
-                            f'-name {self.final_image} {self.msname}'
+                            f'-name {self.final_image} -pol {self.pol} {self.msname}'
         os.system(command_str)    
         return
     
@@ -66,7 +67,7 @@ class image_plane_correction_minor_cycle():
             self.create_dirty_image_all_times()
 
             command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required -size {self.imsize} {self.imsize} -scale {self.cell}arcsec -niter 10 '+\
-                                f'-name {self.final_image} {self.msname}'
+                                f'-name {self.final_image} -pol {self.pol} {self.msname}'
             os.system(command_str)
             self.blank_image(self.final_image+"-model.fits")
 
@@ -83,7 +84,7 @@ class image_plane_correction_minor_cycle():
                     ###Creating dummy image. I am using very small iter to create the basic image structures. I set the model to 0, and residual to dirty image
                     ### before passing it to the minor cycle.
                     command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -scale {self.cell}arcsec '+\
-                                f' -niter 10 -interval {interval[0]} {interval[1]} -name {imagename_tim} {self.msname}'
+                                f' -niter 10 -interval {interval[0]} {interval[1]} -name {imagename_tim} -pol {self.pol} {self.msname}'
 
                     
                     os.system(command_str)
@@ -93,20 +94,23 @@ class image_plane_correction_minor_cycle():
                     ### Creating a dirty image. I only need to put the dirty image into the residual. Note that the residual already present is not corrected after the 
                     ### major cycle. Hence this step is necesary.
                     command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -scale {self.cell}arcsec '+\
-                                    f'-niter 0 -interval {interval[0]} {interval[1]} -name {imagename_tim} {self.msname}'
+                                    f'-niter 0 -interval {interval[0]} {interval[1]} -name {imagename_tim}  -pol {self.pol} {self.msname}'
                     
                     os.system(command_str)
                     self.copy_dirty_image_to_residual(imagename_tim)
             
-            #fig,ax=plt.subplots(nrows=1,ncols=3,sharex=True,sharey=True)
+            #self.fig,self.ax=plt.subplots(nrows=1,ncols=3,sharex=True,sharey=True)
             #for num_interval,interval in enumerate(self.intervals):
             #    data=fits.getdata(self.imagename+"-"+str(num_interval).zfill(4)+"-residual.fits")
-            #    im=ax[num_interval].imshow(data[0,0,:,:],origin='lower')
-            #    plt.colorbar(im,ax=ax[num_interval])
+            #    im=self.ax[num_interval].imshow(data[0,0,:,:],origin='lower')
+            #    plt.colorbar(im,ax=self.ax[num_interval])
             
             
             
             max_residual_value,residual=self.do_minor_cycle()
+            
+            #plt.show()
+            #raise IOError
             
             #im=ax[2].imshow(residual[0,0,:,:],origin='lower')
             #plt.colorbar(im,ax=ax[2])
@@ -115,7 +119,7 @@ class image_plane_correction_minor_cycle():
             for num_interval,interval in enumerate(self.intervals):
                 imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)   
                 command_str=f'singularity exec /data/simpl.sif wsclean --predict --no-dirty -size {self.imsize} {self.imsize} -scale {self.cell}arcsec -interval {interval[0]} {interval[1]} '+\
-                            f'-name {imagename_tim} {self.msname}'
+                            f'-name {imagename_tim} -pol {self.pol} {self.msname}'
 
 
                 os.system(command_str)
@@ -143,9 +147,20 @@ class image_plane_correction_minor_cycle():
             imagename_tim=self.imagename+"-"+str(i).zfill(4)+"-residual.fits"
             if i==0:
                 residual=self.get_residual(imagename_tim)
+                
             else:
                 residual+=self.get_residual(imagename_tim)
         residual/=num_chunk
+        
+        residual_data=residual.squeeze()
+        #im=self.ax[2].imshow(residual_data,origin='lower')
+        x=np.arange(0,1024,1)
+        X,Y=np.meshgrid(x,x)
+        levels=np.array([0.5,0.7,0.9,0.92,0.93,0.95])*np.nanmax(residual_data)
+        #for i in range(3):
+        #    self.ax[i].contour(X,Y,residual_data,levels=levels,colors='r')
+        
+        #plt.colorbar(im,ax=self.ax[2])
         
         model=fits.getdata(self.final_image+"-model.fits")
         psf=fits.getdata(self.final_image+"-psf.fits")[0,...]
