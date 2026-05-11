@@ -56,6 +56,12 @@ class image_plane_correction_minor_cycle():
         os.system(command_str)    
         return
     
+    def update_image_time(self):
+        for img in ['image','model']:
+            with fits.open(self.final_image+f"-{img}.fits",mode='update') as hdul:
+                hdul[0].header['DATE-OBS']=self.ref_time.isot
+                hdul.flush()
+        
     
     def image_with_shift_correction(self):
         
@@ -70,6 +76,7 @@ class image_plane_correction_minor_cycle():
                                 f'-name {self.final_image} -pol {self.pol} {self.msname}'
             os.system(command_str)
             self.blank_image(self.final_image+"-model.fits")
+            self.update_image_time()
 
         while True:
             peak_val1=[]
@@ -99,22 +106,13 @@ class image_plane_correction_minor_cycle():
                     os.system(command_str)
                     self.copy_dirty_image_to_residual(imagename_tim)
             
-            #self.fig,self.ax=plt.subplots(nrows=1,ncols=3,sharex=True,sharey=True)
-            #for num_interval,interval in enumerate(self.intervals):
-            #    data=fits.getdata(self.imagename+"-"+str(num_interval).zfill(4)+"-residual.fits")
-            #    im=self.ax[num_interval].imshow(data[0,0,:,:],origin='lower')
-            #    plt.colorbar(im,ax=self.ax[num_interval])
+           
             
             
             
             max_residual_value,residual=self.do_minor_cycle()
             
-            #plt.show()
-            #raise IOError
-            
-            #im=ax[2].imshow(residual[0,0,:,:],origin='lower')
-            #plt.colorbar(im,ax=ax[2])
-            #plt.show()
+           
             
             for num_interval,interval in enumerate(self.intervals):
                 imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)   
@@ -138,6 +136,14 @@ class image_plane_correction_minor_cycle():
             if j>self.max_major_cycle:
                 break
             j+=1
+        
+        for num_interval,interval in enumerate(self.intervals):
+            imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)
+            command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -scale {self.cell}arcsec '+\
+                                        f'-niter 0 -interval {interval[0]} {interval[1]} -name {imagename_tim}  -pol {self.pol} {self.msname}'
+                        
+            os.system(command_str)
+            self.copy_dirty_image_to_residual(imagename_tim)
         self.create_final_image()
         
             
@@ -153,15 +159,11 @@ class image_plane_correction_minor_cycle():
         residual/=num_chunk
         
         residual_data=residual.squeeze()
-        #im=self.ax[2].imshow(residual_data,origin='lower')
+
         x=np.arange(0,1024,1)
         X,Y=np.meshgrid(x,x)
         levels=np.array([0.5,0.7,0.9,0.92,0.93,0.95])*np.nanmax(residual_data)
-        #for i in range(3):
-        #    self.ax[i].contour(X,Y,residual_data,levels=levels,colors='r')
-        
-        #plt.colorbar(im,ax=self.ax[2])
-        
+       
         model=fits.getdata(self.final_image+"-model.fits")
         psf=fits.getdata(self.final_image+"-psf.fits")[0,...]
         
@@ -273,6 +275,10 @@ class image_plane_correction_minor_cycle():
         mgain_threshold = abs(peak_value) * (1.0 - self.mgain)
         first_threshold = mgain_threshold
                         #max(meta.major_iter_threshold, meta.final_threshold, mgain_threshold)
+        #fig=plt.figure()
+        #ax=fig.add_subplot(121)
+        #plt.imshow(residual[0,0,:,:],origin='lower',cmap='gray')
+        
 
         iteration_number=0
         while (abs(peak_value) > first_threshold and abs(peak_value)>threshold and iteration_number < self.max_iterations):
@@ -289,7 +295,11 @@ class image_plane_correction_minor_cycle():
             
             peak_value = residual[index[0][0],index[1][0],index[2][0],index[3][0]]
         
+            #plt.plot(index[3][0],index[2][0],'ro')
         
+        #ax1=fig.add_subplot(122,sharex=ax,sharey=ax)
+        #ax1.imshow(self.mask[0,0,:,:],origin='lower')
+        #plt.show()
             
             
 

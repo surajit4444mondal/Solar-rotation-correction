@@ -112,6 +112,7 @@ def convert_model_data_to_map(model_data,header,ref_time,observatory,use_phacent
         
 
 def forward_transform_image(data,imagename,ref_time,observatory,use_phacenter):
+    print (imagename)
     header=fits.getheader(imagename)
     gmrt_map=convert_model_data_to_map(data,header,ref_time,observatory,use_phacenter=use_phacenter)
     gmrt_meta=gmrt_map.meta
@@ -128,7 +129,9 @@ def forward_transform_image(data,imagename,ref_time,observatory,use_phacenter):
     
     naxis=gmrt_meta['naxis1']
     
-    xrot=np.zeros(int(naxis*naxis))
+    size=pos[0].size
+    
+    xrot=np.zeros(size)
     yrot=np.zeros_like(xrot)
 
     i=0
@@ -146,6 +149,14 @@ def forward_transform_image(data,imagename,ref_time,observatory,use_phacenter):
         
         model_data_rot[int(yrot[i]),int(xrot[i])]=model_data[y1,x1]
         i+=1
+    
+    #fig,ax=plt.subplots(nrows=1,ncols=2,sharex=True,sharey=True)
+    #ax[0].plot(pos[1],pos[0],'ro')
+    #ax[1].plot(xrot,yrot,'bs')
+    #ax[1].set_title(timestamp_isot)
+    #ax[0].set_title(ref_time)
+    #plt.show()
+    
 
     pos=np.where(np.isnan(model_data_rot)==True)
     model_data_rot[pos]=0
