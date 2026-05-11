@@ -1,0 +1,10 @@
+*.fits
+*.log
+*.im
+*.ms
+*.image
+*.last 
+*.rstr
+*.pyc
+*.toml
+*.crtf
