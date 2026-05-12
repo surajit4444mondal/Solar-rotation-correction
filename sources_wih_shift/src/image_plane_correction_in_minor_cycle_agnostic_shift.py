@@ -10,6 +10,21 @@ import matplotlib.path as mpath
 import json
 import tkinter as tk
 from tkinter import filedialog
+from casatools import table
+ 
+def update_weight_column(msname):
+    tb=table()
+    tb.open(msname,nomodify=False)
+    try:
+        imaging_weights=tb.getcol('IMAGING_WEIGHT_SPECTRUM')
+        weights=tb.getcol('WEIGHT')
+        print (imaging_weights.shape,weights.shape)
+        
+        tb.putcol('WEIGHT',np.mean(imaging_weights,axis=1))
+        tb.flush()
+    finally:
+        tb.close()
+    return
 
 
     
@@ -53,8 +68,8 @@ class image_plane_correction_minor_cycle():
     
     def create_dirty_image_all_times(self):
 
-        command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required -size {self.imsize} {self.imsize} -weight natural -scale {self.cell}arcsec -niter 10 '+\
-                            f'-name {self.final_image} -pol {self.pol} {self.msname}'
+        command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required -size {self.imsize} {self.imsize} -weight uniform -scale {self.cell}arcsec -niter 10 '+\
+                            f'-name {self.final_image} -pol {self.pol} -store-imaging-weights {self.msname}'
         os.system(command_str)    
         return
     
@@ -76,6 +91,7 @@ class image_plane_correction_minor_cycle():
 
             self.blank_image(self.final_image+"-model.fits")
             self.update_image_time()
+            update_weight_column(self.msname)
 
         while True:
             peak_val1=[]
@@ -89,7 +105,7 @@ class image_plane_correction_minor_cycle():
                 if j==0 and not self.do_continue:
                     ###Creating dummy image. I am using very small iter to create the basic image structures. I set the model to 0, and residual to dirty image
                     ### before passing it to the minor cycle.
-                    command_str=f'singularity exec /data/simpl.sif wsclean -save-weights -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -weight natural '+\
+                    command_str=f'singularity exec /data/simpl.sif wsclean -save-weights -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -save-weights -weight natural -use-weights-as-taper '+\
                                 f'-scale {self.cell}arcsec  -niter 10 -interval {interval[0]} {interval[1]} -save-weights -name {imagename_tim} -pol {self.pol} {self.msname}'
 
                     
@@ -102,7 +118,7 @@ class image_plane_correction_minor_cycle():
                 else:
                     ### Creating a dirty image. I only need to put the dirty image into the residual. Note that the residual already present is not corrected after the 
                     ### major cycle. Hence this step is necesary.
-                    command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -weight natural -scale {self.cell}arcsec '+\
+                    command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -weight natural -use-weights-as-taper -scale {self.cell}arcsec '+\
                                     f'-niter 0 -interval {interval[0]} {interval[1]} -name {imagename_tim}  -pol {self.pol} {self.msname}'
                     
                     os.system(command_str)
@@ -118,7 +134,7 @@ class image_plane_correction_minor_cycle():
             
             for num_interval,interval in enumerate(self.intervals):
                 imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)   
-                command_str=f'singularity exec /data/simpl.sif wsclean --predict --no-dirty -size {self.imsize} {self.imsize} -weight natural -scale {self.cell}arcsec '+\
+                command_str=f'singularity exec /data/simpl.sif wsclean --predict --no-dirty -size {self.imsize} {self.imsize} -weight natural -use-weights-as-taper -scale {self.cell}arcsec '+\
                             f'-interval {interval[0]} {interval[1]}  -name {imagename_tim} -pol {self.pol} {self.msname}'
 
 
@@ -141,7 +157,7 @@ class image_plane_correction_minor_cycle():
         
         for num_interval,interval in enumerate(self.intervals):
             imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)
-            command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -weight natural -scale {self.cell}arcsec '+\
+            command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -weight natural -use-weights-as-taper -scale {self.cell}arcsec '+\
                                         f'-niter 0 -interval {interval[0]} {interval[1]} -name {imagename_tim}  -pol {self.pol} {self.msname}'
                         
             os.system(command_str)
