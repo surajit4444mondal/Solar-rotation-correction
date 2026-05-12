@@ -140,6 +140,7 @@ class image_plane_correction_minor_cycle():
                 
             if iteration!=0 or do_continue:
                 opts['continue']=''
+                opts['niter']=0
             
             run_wsclean(self.settings['container'], self.msname, opts)
             
@@ -163,7 +164,6 @@ class image_plane_correction_minor_cycle():
             # 1. Update chunks
             self.image_time_chunks(iteration=j, do_continue=self.settings['continue'])
             
-
             # 2. Minor Cycle (Deconvolution)
             max_residual_value=self.do_minor_cycle()
             
