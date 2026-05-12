@@ -4,28 +4,47 @@ import os
 from astropy.convolution import Gaussian2DKernel, convolve
 from astropy.time import Time
 import matplotlib.pyplot as plt
-from matplotlib.widgets import RectangleSelector, EllipseSelector, Button
-from matplotlib.patches import Rectangle, Ellipse
-import matplotlib.path as mpath
-import json
-import tkinter as tk
-from tkinter import filedialog
 from casatools import table
- 
-def update_weight_column(msname):
+from masking_utils import MaskingSelector
+
+def remove_column(msname):
     tb=table()
     tb.open(msname,nomodify=False)
     try:
-        imaging_weights=tb.getcol('IMAGING_WEIGHT_SPECTRUM')
-        weights=tb.getcol('WEIGHT')
-        print (imaging_weights.shape,weights.shape)
+        colnames=tb.colnames()
+        if 'IMAGING_WEIGHT_SPECTRUM' in colnames:
+            tb.removecols('IMAGING_WEIGHT_SPECTRUM')
+            tb.flush()
+    finally:
+        tb.close()
+    return
+ 
+def update_weight_column(msname,initialise=False):
+    tb=table()
+    tb.open(msname,nomodify=False)
+    try:
         
-        tb.putcol('WEIGHT',np.mean(imaging_weights,axis=1))
+        weights=tb.getcol('WEIGHT')
+        if not initialise:
+            imaging_weights=np.mean(tb.getcol('IMAGING_WEIGHT_SPECTRUM'),axis=1)
+        else:
+            imaging_weights=np.ones_like(weights)
+        
+        tb.putcol('WEIGHT',imaging_weights)
         tb.flush()
     finally:
         tb.close()
     return
-
+    
+def run_wsclean(container_path, msname, options, predict=False):
+    """Generic wrapper for shell-based WSClean calls."""
+    base_cmd = f"singularity exec {container_path} wsclean"
+    args = " ".join([f"-{k} {v}" if v != "" else f"-{k}" for k, v in options.items()])
+    if predict:
+        args=args+' --predict'
+    command = f"{base_cmd} {args} {msname}"
+    print(f"Executing: {command}")
+    os.system(command)
 
     
 class image_plane_correction_minor_cycle():
@@ -34,24 +53,29 @@ class image_plane_correction_minor_cycle():
         self.backward_transform=backward_transform
         self.msname=msname
         self.ref_time=Time(ref_time_isot,format='isot')    
-        self.threshold=0.18
-        self.max_major_cycle=3
+        
+        # Configuration parameters
+        self.settings = {
+            'imsize': 512,
+            'cell': '0.5arcsec',
+            'threshold': 0.18,
+            'mgain': 0.1,
+            'max_major_cycle': 3,
+            'container': '/data/simpl.sif',
+            'pol':'I',
+            'continue': False,
+            'max_iterations':50,
+            'weight':'uniform'     
+        }
+        self.interactive=True
         self.intervals=intervals
         self.imagename='test_simulated_single_source_wsclean_self'
         self.final_image="test_self_major_minor"
-        self.imsize=512
-        self.cell=0.5  ###arcsec
-        self.do_continue=False
-        self.max_iterations=50
-        self.mgain=0.1
-        self.interactive=True
-        self.pol='I'
         self.image_normalisers=[None]*len(self.intervals)
         if maskfile:
             self.mask=np.load(maskfile)
         self.mask_class=MaskingSelector
         
-
         
     def get_residual(self,imagename):
         transformed_data=self.backward_transform(imagename,self.ref_time)  ### when going from UV plane to image plane
@@ -66,104 +90,110 @@ class image_plane_correction_minor_cycle():
             hdul.flush()
         return
     
-    def create_dirty_image_all_times(self):
-
-        command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required -size {self.imsize} {self.imsize} -weight uniform -scale {self.cell}arcsec -niter 10 '+\
-                            f'-name {self.final_image} -pol {self.pol} -store-imaging-weights {self.msname}'
-        os.system(command_str)    
+    def create_dirty_image_all_times(self):        
+        opts = {
+            'size': f"{self.settings['imsize']} {self.settings['imsize']}",
+            'scale': self.settings['cell'],
+            'weight': f"{self.settings['weight']}",
+            'niter': 10,
+            'name': self.final_image,
+            'store-imaging-weights': '',
+            'no-update-model-required': '',
+            'pol':f"{self.settings['pol']}"
+        }
+                            
+        run_wsclean(self.settings['container'], self.msname, opts)
         return
+        
+    def run_initial_synthesis(self):
+        self.create_dirty_image_all_times()
+        self.blank_image(self.final_image+"-model.fits")
+        self.update_image_time()
+        update_weight_column(self.msname)
     
     def update_image_time(self):
         for img in ['image','model']:
             with fits.open(self.final_image+f"-{img}.fits",mode='update') as hdul:
                 hdul[0].header['DATE-OBS']=self.ref_time.isot
                 hdul.flush()
-        
     
-    def image_with_shift_correction(self):
-        
-        peak_vals=[]
-
-        j=0
-
-        if not self.do_continue:
-            self.create_dirty_image_all_times()
-
-            self.blank_image(self.final_image+"-model.fits")
-            self.update_image_time()
-            update_weight_column(self.msname)
-
-        while True:
-            peak_val1=[]
-            for num_interval,interval in enumerate(self.intervals):
-                imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)
-                if j==0 and not self.do_continue:
-                    continue1=''
-                else:
-                    continue1=' -continue'
-                
-                if j==0 and not self.do_continue:
-                    ###Creating dummy image. I am using very small iter to create the basic image structures. I set the model to 0, and residual to dirty image
-                    ### before passing it to the minor cycle.
-                    command_str=f'singularity exec /data/simpl.sif wsclean -save-weights -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -save-weights -weight natural -use-weights-as-taper '+\
-                                f'-scale {self.cell}arcsec  -niter 10 -interval {interval[0]} {interval[1]} -save-weights -name {imagename_tim} -pol {self.pol} {self.msname}'
-
-                    
-                    os.system(command_str)
-                    self.blank_image(imagename_tim+"-model.fits")
-                    self.copy_dirty_image_to_residual(imagename_tim)
-                    uv_weight_data=fits.getdata(imagename_tim+"-weights.fits")
-                    print (num_interval)
-                    self.image_normalisers[num_interval]=np.sum(uv_weight_data)
-                else:
-                    ### Creating a dirty image. I only need to put the dirty image into the residual. Note that the residual already present is not corrected after the 
-                    ### major cycle. Hence this step is necesary.
-                    command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -weight natural -use-weights-as-taper -scale {self.cell}arcsec '+\
-                                    f'-niter 0 -interval {interval[0]} {interval[1]} -name {imagename_tim}  -pol {self.pol} {self.msname}'
-                    
-                    os.system(command_str)
-                    self.copy_dirty_image_to_residual(imagename_tim)
-            
-           
-            
-            
-            
-            max_residual_value,residual=self.do_minor_cycle()
-            
-           
-            
-            for num_interval,interval in enumerate(self.intervals):
-                imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)   
-                command_str=f'singularity exec /data/simpl.sif wsclean --predict --no-dirty -size {self.imsize} {self.imsize} -weight natural -use-weights-as-taper -scale {self.cell}arcsec '+\
-                            f'-interval {interval[0]} {interval[1]}  -name {imagename_tim} -pol {self.pol} {self.msname}'
-
-
-                os.system(command_str)
-                
-                residual=imagename_tim+"-residual.fits"
-                peak_val=self.get_peak_residual(residual)
-
-
-                peak_val1.append(peak_val)
-            
-            peak_vals+=peak_val1
-            
-            print ("Peak value of residuals:",peak_val1)
-            if max(peak_val1)<self.threshold or max_residual_value<self.threshold:
-                break
-            if j>self.max_major_cycle:
-                break
-            j+=1
-        
+    
+    def image_time_chunks(self, iteration, do_continue):
         for num_interval,interval in enumerate(self.intervals):
             imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)
-            command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -weight natural -use-weights-as-taper -scale {self.cell}arcsec '+\
-                                        f'-niter 0 -interval {interval[0]} {interval[1]} -name {imagename_tim}  -pol {self.pol} {self.msname}'
-                        
-            os.system(command_str)
+            
+            opts={
+                    'no-update-model-required':'',
+                    'size': f"{self.settings['imsize']} {self.settings['imsize']}",
+                    'scale': self.settings['cell'],
+                    'weight': 'natural',
+                    'niter': 0,
+                    'name': imagename_tim,
+                    'pol':f"{self.settings['pol']}",
+                    '-use-weights-as-taper':'',
+                    'interval': f"{interval[0]} {interval[1]}"
+                }
+            
+            if iteration==0:
+                opts['save-weights']=''
+                opts['niter']=10
+                
+            if iteration!=0 or do_continue:
+                opts['continue']=''
+            
+            run_wsclean(self.settings['container'], self.msname, opts)
+            
             self.copy_dirty_image_to_residual(imagename_tim)
+            
+            if iteration==0:
+                self.blank_image(imagename_tim+"-model.fits")
+                uv_weight_data=fits.getdata(imagename_tim+"-weights.fits")
+                self.image_normalisers[num_interval]=np.sum(uv_weight_data)
+        
+    
+    def perform_imaging(self):
+        if not self.settings['continue']:
+            remove_column(self.msname)  ### I just remove the imaging_weight column
+            update_weight_column(self.msname,initialise=True)
+            self.run_initial_synthesis()
+                   
+        for j in range(self.settings['max_major_cycle']):
+            print(f"--- Starting Major Cycle {j} ---")
+            
+            # 1. Update chunks
+            self.image_time_chunks(iteration=j, do_continue=self.settings['continue'])
+            
+
+            # 2. Minor Cycle (Deconvolution)
+            max_residual_value=self.do_minor_cycle()
+            
+            # 3. Predict/Update model back to UV plane
+            self.predict_model_to_ms()
+            
+            if max_residual_value < self.settings['threshold']:
+                print("Convergence reached.")
+                break
+        self.image_time_chunks(iteration=j+1, do_continue=self.settings['continue'])
         self.create_final_image()
         
+        
+    
+    def predict_model_to_ms(self):
+        for num_interval,interval in enumerate(self.intervals):
+            imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)
+            opts={
+                    'size': f"{self.settings['imsize']} {self.settings['imsize']}",
+                    'scale': self.settings['cell'],
+                    'weight': 'natural',
+                    'niter': 0,
+                    'name': imagename_tim,
+                    'pol':f"{self.settings['pol']}",
+                    '-use-weights-as-taper':'',
+                    'interval': f"{interval[0]} {interval[1]}",
+                }
+            
+            run_wsclean(self.settings['container'], self.msname, opts,predict=True)
+            
             
     def do_minor_cycle(self):
         num_chunk=len(self.intervals)
@@ -178,23 +208,20 @@ class image_plane_correction_minor_cycle():
         
         residual_data=residual.squeeze()
 
-        x=np.arange(0,1024,1)
-        X,Y=np.meshgrid(x,x)
-        levels=np.array([0.5,0.7,0.9,0.92,0.93,0.95])*np.nanmax(residual_data)
+        
        
         model=fits.getdata(self.final_image+"-model.fits")
         psf=fits.getdata(self.final_image+"-psf.fits")[0,...]
         
-        result=self.deconvolve(residual, model, psf,self.threshold)
+        result=self.deconvolve(residual, model, psf,self.settings['threshold'])
         
         for i in range(num_chunk):
             modelname_tim=self.imagename+"-"+str(i).zfill(4)+"-model.fits"
             self.update_model_image(modelname_tim,result['model'])
         
-
         self.update_model_image(self.final_image+"-model.fits",result['model'])
         
-        return np.nanmax(np.abs(result['residual'])),result['residual']
+        return np.nanmax(np.abs(result['residual']))
     
     def create_final_image(self):
         num_chunks=len(self.intervals)
@@ -290,21 +317,18 @@ class image_plane_correction_minor_cycle():
         
         peak_value = residual[index[0][0],index[1][0],index[2][0],index[3][0]]
 
-        mgain_threshold = abs(peak_value) * (1.0 - self.mgain)
+        mgain_threshold = abs(peak_value) * (1.0 - self.settings['mgain'])
         first_threshold = mgain_threshold
-                        #max(meta.major_iter_threshold, meta.final_threshold, mgain_threshold)
-        #fig=plt.figure()
-        #ax=fig.add_subplot(121)
-        #plt.imshow(residual[0,0,:,:],origin='lower',cmap='gray')
+                       
         
 
         iteration_number=0
-        while (abs(peak_value) > first_threshold and abs(peak_value)>threshold and iteration_number < self.max_iterations):
+        while (abs(peak_value) > first_threshold and abs(peak_value)>threshold and iteration_number < self.settings['max_iterations']):
             print(f"peak={peak_value}, first threshold={first_threshold}")
-            model[index[0][0],index[1][0],index[2][0],index[3][0]] += peak_value*self.mgain
+            model[index[0][0],index[1][0],index[2][0],index[3][0]] += peak_value*self.settings['mgain']
 
             psf_shift = (index[2][0] + height // 2, index[3][0] + width // 2)
-            residual = residual - peak_value*self.mgain * np.roll(psf, psf_shift, axis=(1, 2))
+            residual = residual - peak_value*self.settings['mgain'] * np.roll(psf, psf_shift, axis=(1, 2))
             
 
             masked_residual=self.do_masking(residual,self.mask)
@@ -313,11 +337,7 @@ class image_plane_correction_minor_cycle():
             
             peak_value = residual[index[0][0],index[1][0],index[2][0],index[3][0]]
         
-            #plt.plot(index[3][0],index[2][0],'ro')
-        
-        #ax1=fig.add_subplot(122,sharex=ax,sharey=ax)
-        #ax1.imshow(self.mask[0,0,:,:],origin='lower')
-        #plt.show()
+           
             
             
 
@@ -343,231 +363,7 @@ class image_plane_correction_minor_cycle():
         
 
     
-class MaskingSelector:
-    def __init__(self, data):
-        self.data = data
-        self.full_mask = np.zeros(self.data.shape, dtype=bool)
-        self.interactive=True
-        self.fig, (self.ax_src, self.ax_mask) = plt.subplots(1, 2, figsize=(12, 6),sharex=True,sharey=True)
-        self.ax_src.imshow(data, cmap='gray')
-        self.ax_mask.set_title("Masked Result")
-        plt.subplots_adjust(bottom=0.2)
 
-        self.selections = []
-        
-        # Selectors
-        self.rect = RectangleSelector(self.ax_src, self.on_select, interactive=False)
-        self.circ = EllipseSelector(self.ax_src, self.on_select, interactive=False)
-        self.circ.set_active(False)
-
-        # Buttons
-        ax_rect = plt.axes([0.1, 0.05, 0.08, 0.075])
-        ax_circ = plt.axes([0.2, 0.05, 0.08, 0.075])
-        ax_apply = plt.axes([0.3, 0.05, 0.08, 0.075])
-        ax_clear = plt.axes([0.4, 0.05, 0.08, 0.075])
-
-        self.btn_rect = Button(ax_rect, 'Rect')
-        self.btn_circ = Button(ax_circ, 'Circle')
-        self.btn_apply = Button(ax_apply, 'Apply Mask', color='lightgreen')
-        self.btn_clear = Button(ax_clear, 'Clear')
-
-        self.btn_rect.on_clicked(lambda x: self.toggle('r'))
-        self.btn_circ.on_clicked(lambda x: self.toggle('c'))
-        self.btn_apply.on_clicked(self.apply_mask)
-        self.btn_clear.on_clicked(self.clear)
-        self.mask_filename="mask.json"
-        
-        ax_save_mask = plt.axes([0.5, 0.05, 0.08, 0.075])
-        ax_load_mask = plt.axes([0.6, 0.05, 0.08, 0.075])
-
-        self.btn_save_mask = Button(ax_save_mask, 'Save Mask')
-        self.btn_load_mask = Button(ax_load_mask, 'Load Mask')
-
-        self.btn_save_mask.on_clicked(self.save_mask)
-        self.btn_load_mask.on_clicked(self.load_mask)
-        
-        ax_save_patch = plt.axes([0.7, 0.05, 0.08, 0.075])
-        ax_load_patch = plt.axes([0.8, 0.05, 0.08, 0.075])
-        
-        self.btn_save_patch = Button(ax_save_patch, 'Save Patches')
-        self.btn_load_patch = Button(ax_load_patch, 'Load Patches')
-
-        self.btn_save_patch.on_clicked(self.save_selections)
-        self.btn_load_patch.on_clicked(self.load_selections)
-        
-        ax_noninteractive_patch = plt.axes([0.9, 0.05, 0.08, 0.075])
-        self.btn_noninteractive_patch = Button(ax_noninteractive_patch, 'Non-interactive')
-        self.btn_noninteractive_patch.on_clicked(self.go_noninteractive)
-        
-    def go_noninteractive(self, event=None):
-        self.interactive=False
-
-    def on_select(self, eclick, erelease):
-        width = abs(erelease.xdata - eclick.xdata)
-        height = abs(erelease.ydata - eclick.ydata)
-        xmin, ymin = min(eclick.xdata, erelease.xdata), min(eclick.ydata, erelease.ydata)
-
-        if self.rect.active:
-            p = Rectangle((xmin, ymin), width, height, edgecolor='red', fill=False)
-        else:
-            center = (xmin + width/2, ymin + height/2)
-            p = Ellipse(center, width, height, edgecolor='blue', fill=False)
-        
-        self.ax_src.add_patch(p)
-        self.selections.append(p)
-        self.fig.canvas.draw_idle()
-
-    def toggle(self, mode):
-        self.rect.set_active(mode == 'r')
-        self.circ.set_active(mode == 'c')
-
-    def apply_mask(self, event):
-        # Create a coordinate grid for the image
-        ny, nx = self.data.shape
-        x, y = np.meshgrid(np.arange(nx), np.arange(ny))
-        points = np.vstack((x.flatten(), y.flatten())).T
-
-        for patch in self.selections:
-            # Get the path of the patch (works for both Rect and Ellipse)
-            path = patch.get_path()
-            patch_transform = patch.get_transform()
-            combined_transform = patch_transform + self.ax_src.transData.inverted()
-            data_path = path.transformed(combined_transform)
-            grid_mask = data_path.contains_points(points).reshape((ny, nx))
-            pos=np.where(grid_mask==True)
-            self.full_mask |= grid_mask # Combine masks with OR
-
-        # Mask the data: keep original where mask is True, else 0 (or NaN)
-        masked_data = np.where(self.full_mask, self.data, np.nan)
-        
-        self.ax_mask.imshow(masked_data, cmap='gray')
-        self.fig.canvas.draw_idle()
-
-    def clear(self, event):
-        for p in self.selections: p.remove()
-        self.selections = []
-        self.ax_mask.cla()
-        self.fig.canvas.draw_idle()
-        self.full_mask = np.zeros(self.data.shape, dtype=bool)
-    
-    def load_selections(self, event=None):
-        # 1. Hide the tiny tkinter main window that pops up
-        root = tk.Tk()
-        root.withdraw() 
-        
-        # 2. Open the file browser
-        file_path = filedialog.askopenfilename(
-            title="Select Selection File",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
-        )
-        
-        # 3. Destroy root so it doesn't hang in the background
-        root.destroy()
-
-        if not file_path:
-            return # User cancelled
-
-        try:
-            with open(file_path, 'r') as f:
-                saved_data = json.load(f)
-                
-            # Clear current selections before loading new ones (optional)
-            self.clear(None) 
-            
-            print (saved_data)
-            for item in saved_data:
-                if item['type'] == 'rectangle':
-                    p = Rectangle((item['x'], item['y']), item['width'], item['height'], 
-                                  edgecolor='red', fill=False, linewidth=2)
-                elif item['type'] == 'ellipse':
-                    p = Ellipse(item['center'], item['width'], item['height'], 
-                                edgecolor='blue', fill=False, linewidth=2)
-                
-                self.ax_src.add_patch(p)
-                self.selections.append(p)
-                
-                
-            self.fig.canvas.draw_idle()
-            print(f"Loaded {len(saved_data)} selections from {file_path}")
-        except Exception as e:
-            print(f"Error loading file: {e}")
-
-    def save_selections(self, event=None):
-        root = tk.Tk()
-        root.withdraw()
-        
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".json",
-            filetypes=[("JSON files", "*.json")],
-            title="Save Selections As"
-        )
-        
-        root.destroy()
-        
-        if file_path:
-            # (Use the same dictionary logic from the previous step)
-            data_to_save = []
-            for patch in self.selections:
-                shape_info = {}
-                if isinstance(patch, Rectangle):
-                    shape_info['type'] = 'rectangle'
-                    shape_info['x'] = patch.get_x()
-                    shape_info['y'] = patch.get_y()
-                    shape_info['width'] = patch.get_width()
-                    shape_info['height'] = patch.get_height()
-                elif isinstance(patch, Ellipse):
-                    shape_info['type'] = 'ellipse'
-                    shape_info['center'] = patch.center # (x, y)
-                    shape_info['width'] = patch.width
-                    shape_info['height'] = patch.height
-                    
-                data_to_save.append(shape_info)
-            
-            with open(file_path, 'w') as f:
-                json.dump(data_to_save, f, indent=4)
-            print(f"Saved to {file_path}")
-            
-    def load_mask(self, event=None):
-        # 1. Hide the tiny tkinter main window that pops up
-        root = tk.Tk()
-        root.withdraw() 
-        
-        # 2. Open the file browser
-        file_path = filedialog.askopenfilename(
-            title="Select Selection File",
-            filetypes=[("npy mask files", "*.npy"), ("All files", "*.*")]
-        )
-        
-        # 3. Destroy root so it doesn't hang in the background
-        root.destroy()
-
-        if not file_path:
-            return # User cancelled
-
-        try:
-            
-            self.full_mask = np.load(file_path)
-                
-            print(f"Loaded mask from {file_path}")
-        except Exception as e:
-            print(f"Error loading file: {e}")
-            
-    def save_mask(self, event=None):
-        root = tk.Tk()
-        root.withdraw()
-        
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".npy",
-            filetypes=[("npy mask files", "*.npy")],
-            title="Save Selections As"
-        )
-        
-        root.destroy()
-        
-        if file_path:
-            np.save(file_path,self.full_mask)
-        else:
-            print(f"Error loading file: {file_path}")    
             
     
     
