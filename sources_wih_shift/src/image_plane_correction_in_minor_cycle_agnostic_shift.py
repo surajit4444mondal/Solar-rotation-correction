@@ -14,14 +14,14 @@ from tkinter import filedialog
 
     
 class image_plane_correction_minor_cycle():
-    def __init__(self,forward_transform,backward_transform,msname,ref_time_isot,maskfile=None):
+    def __init__(self,forward_transform,backward_transform,msname,ref_time_isot,intervals,maskfile=None):
         self.forward_transform=forward_transform
         self.backward_transform=backward_transform
         self.msname=msname
         self.ref_time=Time(ref_time_isot,format='isot')    
         self.threshold=0.18
         self.max_major_cycle=3
-        self.intervals=[[0,1],[1,2]]
+        self.intervals=intervals
         self.imagename='test_simulated_single_source_wsclean_self'
         self.final_image="test_self_major_minor"
         self.imsize=512
@@ -31,9 +31,11 @@ class image_plane_correction_minor_cycle():
         self.mgain=0.1
         self.interactive=True
         self.pol='I'
+        self.image_normalisers=[None]*len(self.intervals)
         if maskfile:
             self.mask=np.load(maskfile)
         self.mask_class=MaskingSelector
+        
 
         
     def get_residual(self,imagename):
@@ -51,7 +53,7 @@ class image_plane_correction_minor_cycle():
     
     def create_dirty_image_all_times(self):
 
-        command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required -size {self.imsize} {self.imsize} -scale {self.cell}arcsec -niter 10 '+\
+        command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required -size {self.imsize} {self.imsize} -weight natural -scale {self.cell}arcsec -niter 10 '+\
                             f'-name {self.final_image} -pol {self.pol} {self.msname}'
         os.system(command_str)    
         return
@@ -72,9 +74,6 @@ class image_plane_correction_minor_cycle():
         if not self.do_continue:
             self.create_dirty_image_all_times()
 
-            command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required -size {self.imsize} {self.imsize} -scale {self.cell}arcsec -niter 10 '+\
-                                f'-name {self.final_image} -pol {self.pol} {self.msname}'
-            os.system(command_str)
             self.blank_image(self.final_image+"-model.fits")
             self.update_image_time()
 
@@ -90,17 +89,20 @@ class image_plane_correction_minor_cycle():
                 if j==0 and not self.do_continue:
                     ###Creating dummy image. I am using very small iter to create the basic image structures. I set the model to 0, and residual to dirty image
                     ### before passing it to the minor cycle.
-                    command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -scale {self.cell}arcsec '+\
-                                f' -niter 10 -interval {interval[0]} {interval[1]} -name {imagename_tim} -pol {self.pol} {self.msname}'
+                    command_str=f'singularity exec /data/simpl.sif wsclean -save-weights -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -weight natural '+\
+                                f'-scale {self.cell}arcsec  -niter 10 -interval {interval[0]} {interval[1]} -save-weights -name {imagename_tim} -pol {self.pol} {self.msname}'
 
                     
                     os.system(command_str)
                     self.blank_image(imagename_tim+"-model.fits")
                     self.copy_dirty_image_to_residual(imagename_tim)
+                    uv_weight_data=fits.getdata(imagename_tim+"-weights.fits")
+                    print (num_interval)
+                    self.image_normalisers[num_interval]=np.sum(uv_weight_data)
                 else:
                     ### Creating a dirty image. I only need to put the dirty image into the residual. Note that the residual already present is not corrected after the 
                     ### major cycle. Hence this step is necesary.
-                    command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -scale {self.cell}arcsec '+\
+                    command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -weight natural -scale {self.cell}arcsec '+\
                                     f'-niter 0 -interval {interval[0]} {interval[1]} -name {imagename_tim}  -pol {self.pol} {self.msname}'
                     
                     os.system(command_str)
@@ -116,8 +118,8 @@ class image_plane_correction_minor_cycle():
             
             for num_interval,interval in enumerate(self.intervals):
                 imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)   
-                command_str=f'singularity exec /data/simpl.sif wsclean --predict --no-dirty -size {self.imsize} {self.imsize} -scale {self.cell}arcsec -interval {interval[0]} {interval[1]} '+\
-                            f'-name {imagename_tim} -pol {self.pol} {self.msname}'
+                command_str=f'singularity exec /data/simpl.sif wsclean --predict --no-dirty -size {self.imsize} {self.imsize} -weight natural -scale {self.cell}arcsec '+\
+                            f'-interval {interval[0]} {interval[1]}  -name {imagename_tim} -pol {self.pol} {self.msname}'
 
 
                 os.system(command_str)
@@ -139,7 +141,7 @@ class image_plane_correction_minor_cycle():
         
         for num_interval,interval in enumerate(self.intervals):
             imagename_tim=self.imagename+"-"+str(num_interval).zfill(4)
-            command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -scale {self.cell}arcsec '+\
+            command_str=f'singularity exec /data/simpl.sif wsclean -no-update-model-required {continue1} -size {self.imsize} {self.imsize} -weight natural -scale {self.cell}arcsec '+\
                                         f'-niter 0 -interval {interval[0]} {interval[1]} -name {imagename_tim}  -pol {self.pol} {self.msname}'
                         
             os.system(command_str)
@@ -152,11 +154,11 @@ class image_plane_correction_minor_cycle():
         for i in range(num_chunk):
             imagename_tim=self.imagename+"-"+str(i).zfill(4)+"-residual.fits"
             if i==0:
-                residual=self.get_residual(imagename_tim)
+                residual=self.get_residual(imagename_tim)*self.image_normalisers[i]
                 
             else:
-                residual+=self.get_residual(imagename_tim)
-        residual/=num_chunk
+                residual+=self.get_residual(imagename_tim)*self.image_normalisers[i]
+        residual/=np.sum(self.image_normalisers)
         
         residual_data=residual.squeeze()
 
@@ -197,11 +199,11 @@ class image_plane_correction_minor_cycle():
         
         for i in range(num_chunks):
             if i==0:
-                residual_data=fits.getdata(self.imagename+"-"+str(i).zfill(4)+"-residual.fits")[0,0,:,:]
+                residual_data=fits.getdata(self.imagename+"-"+str(i).zfill(4)+"-residual.fits")[0,0,:,:]*self.image_normalisers[i]
             else:
-                residual_data+=fits.getdata(self.imagename+"-"+str(i).zfill(4)+"-residual.fits")[0,0,:,:]
+                residual_data+=fits.getdata(self.imagename+"-"+str(i).zfill(4)+"-residual.fits")[0,0,:,:]*self.image_normalisers[i]
                 
-        residual_data/=num_chunks
+        residual_data/=np.sum(self.image_normalisers)
         
         model_data=fits.getdata(self.final_image+"-model.fits")[0,0,...]
         smoothed=convolve(model_data,kernel,normalize_kernel=False)    

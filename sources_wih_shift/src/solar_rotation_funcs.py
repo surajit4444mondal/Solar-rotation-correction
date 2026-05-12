@@ -112,7 +112,7 @@ def convert_model_data_to_map(model_data,header,ref_time,observatory,use_phacent
         
 
 def forward_transform_image(data,imagename,ref_time,observatory,use_phacenter):
-    print (imagename)
+    #return data
     header=fits.getheader(imagename)
     gmrt_map=convert_model_data_to_map(data,header,ref_time,observatory,use_phacenter=use_phacenter)
     gmrt_meta=gmrt_map.meta
@@ -164,6 +164,7 @@ def forward_transform_image(data,imagename,ref_time,observatory,use_phacenter):
     return model_data_rot
 
 def backward_transform_image(imagename,ref_time,observatory,use_phacenter):
+    #return fits.getdata(imagename)
     gmrt_map=convert_fits_to_map(imagename,observatory,use_phacenter=use_phacenter)
     gmrt_meta=gmrt_map.meta
     
