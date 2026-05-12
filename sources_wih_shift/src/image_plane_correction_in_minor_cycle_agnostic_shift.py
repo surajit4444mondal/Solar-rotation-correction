@@ -353,6 +353,95 @@ class image_plane_correction_minor_cycle():
 
         return result
     
+    
+    def deconvolve_local(self,residual, model, psf,threshold):
+        nchan, npol, height, width = residual.shape
+        
+        patch_half = 64
+
+        # residual and model are numpy arrays with dimensions nchan x npol x height x width
+        # psf is a numpy array with dimensions nchan x height x width
+
+        # This file doesn't support multiple channels or polarizations:
+        if nchan != 1 or npol != 1:
+            raise NotImplementedError("nchan and npol must be one")
+        
+        
+        if self.interactive:
+            create_mask=self.mask_class(residual[0,0,:,:])
+            plt.show()
+            
+            self.mask=np.expand_dims(create_mask.full_mask,axis=(0,1))
+            self.interactive=create_mask.interactive
+        elif not hasattr(self,'mask'):
+            self.mask=np.ones(residual.shape,dtype=bool)
+        elif self.mask.shape!=residual.shape:
+            self.mask=np.expand_dims(self.mask,axis=(0,1))
+            if self.mask.shape!=residual.shape:
+                raise RuntimeError("Shape of provided mask does not match")
+            
+            
+        
+
+        masked_residual=self.do_masking(residual,self.mask)
+        max_val=np.nanmax(masked_residual)
+        index=np.where(np.abs(masked_residual-max_val)<1e-5)
+        
+        peak_value = residual[index[0][0],index[1][0],index[2][0],index[3][0]]
+
+        mgain_threshold = abs(peak_value) * (1.0 - self.settings['mgain'])
+        first_threshold = mgain_threshold
+                       
+        
+
+        iteration_number=0
+        while (abs(peak_value) > first_threshold and abs(peak_value)>threshold and iteration_number < self.settings['max_iterations']):
+            print(f"peak={peak_value}, first threshold={first_threshold}")
+            model[index[0][0],index[1][0],index[2][0],index[3][0]] += peak_value*self.settings['mgain']
+            
+            # Local Subtraction Coordinates
+            # Peak location in the image
+            py, px = index[2][0], index[3][0]
+            # Center of the PSF (where the peak is located)
+            cy, cx = height // 2, width // 2
+
+            # Define bounds for the image and the PSF patch
+            y_start, y_end = max(0, py - patch_half), min(height, py + patch_half + 1)
+            x_start, x_end = max(0, px - patch_half), min(width, px + patch_half + 1)
+            
+            # Calculate the corresponding slices in the PSF array
+            psf_y_start = cy - (py - y_start)
+            psf_y_end   = cy + (y_end - py)
+            psf_x_start = cx - (px - x_start)
+            psf_x_end   = cx + (x_end - px)
+
+            # 3. Apply subtraction only to the local window
+            subtraction_term = peak_value * self.settings['mgain'] * psf[0, psf_y_start:psf_y_end, psf_x_start:psf_x_end]
+            residual[0, 0, y_start:y_end, x_start:x_end] -= subtraction_term
+            
+
+            masked_residual=self.do_masking(residual,self.mask)
+            max_val=np.nanmax(masked_residual)
+            index=np.where(np.abs(masked_residual-max_val)<1e-5)
+            
+            peak_value = residual[index[0][0],index[1][0],index[2][0],index[3][0]]
+        
+           
+            
+            
+
+        print(f"Stopped after iteration {iteration_number}, peak={peak_value}")
+
+        # Fill a dictionary with values that wsclean expects:
+        result = dict()
+        result["residual"] = residual
+        result["model"] = model
+        result["level"] = peak_value
+        result["continue"] = False#(peak_value > meta.final_threshold and \
+                                #meta.iteration_number < meta.max_iterations)
+
+        return result
+    
     def do_masking(self,data,mask):
         shape=data.shape
         data1=np.zeros_like(data)
