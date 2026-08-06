@@ -17,7 +17,7 @@ class MaskingSelector:
         self.full_mask = np.zeros(self.data.shape, dtype=bool)
         self.interactive=True
         self.fig, (self.ax_src, self.ax_mask) = plt.subplots(1, 2, figsize=(12, 6),sharex=True,sharey=True)
-        self.ax_src.imshow(data, cmap='gray')
+        self.ax_src.imshow(data, cmap='rainbow')
         self.ax_mask.set_title("Masked Result")
         plt.subplots_adjust(bottom=0.2)
 
@@ -76,10 +76,10 @@ class MaskingSelector:
         xmin, ymin = min(eclick.xdata, erelease.xdata), min(eclick.ydata, erelease.ydata)
 
         if self.rect.active:
-            p = Rectangle((xmin, ymin), width, height, edgecolor='red', fill=False)
+            p = Rectangle((xmin, ymin), width, height, edgecolor='white', fill=False)
         else:
             center = (xmin + width/2, ymin + height/2)
-            p = Ellipse(center, width, height, edgecolor='blue', fill=False)
+            p = Ellipse(center, width, height, edgecolor='white', fill=False)
         
         self.ax_src.add_patch(p)
         self.selections.append(p)
@@ -146,10 +146,10 @@ class MaskingSelector:
             for item in saved_data:
                 if item['type'] == 'rectangle':
                     p = Rectangle((item['x'], item['y']), item['width'], item['height'], 
-                                  edgecolor='red', fill=False, linewidth=2)
+                                  edgecolor='white', fill=False, linewidth=2)
                 elif item['type'] == 'ellipse':
                     p = Ellipse(item['center'], item['width'], item['height'], 
-                                edgecolor='blue', fill=False, linewidth=2)
+                                edgecolor='white', fill=False, linewidth=2)
                 
                 self.ax_src.add_patch(p)
                 self.selections.append(p)

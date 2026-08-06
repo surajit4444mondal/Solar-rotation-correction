@@ -5,7 +5,7 @@ from astropy.convolution import Gaussian2DKernel, convolve
 from astropy.time import Time
 import matplotlib.pyplot as plt
 from casatools import table
-from masking_utils import MaskingSelector
+from .masking_utils import MaskingSelector
 
 def remove_column(msname):
     tb=table()
@@ -40,10 +40,10 @@ def run_wsclean(container_path, msname, options, predict=False):
     """Generic wrapper for shell-based WSClean calls."""
     base_cmd = f"singularity exec {container_path} wsclean"
     args = " ".join([f"-{k} {v}" if v != "" else f"-{k}" for k, v in options.items()])
+    #args+=' -minuv-l 100'
     if predict:
         args=args+' --predict'
-    command = f"{base_cmd} {args} {msname}"
-    print(f"Executing: {command}")
+    command = f"{base_cmd} {args} {msname} > /dev/null"  ### redirecting prints to null
     os.system(command)
 
     
@@ -157,7 +157,8 @@ class image_plane_correction_minor_cycle():
             remove_column(self.msname)  ### I just remove the imaging_weight column
             update_weight_column(self.msname,initialise=True)
             self.run_initial_synthesis()
-                   
+        
+
         for j in range(self.settings['max_major_cycle']):
             print(f"--- Starting Major Cycle {j} ---")
             
@@ -169,7 +170,7 @@ class image_plane_correction_minor_cycle():
             
             # 3. Predict/Update model back to UV plane
             self.predict_model_to_ms()
-            
+
             if max_residual_value < self.settings['threshold']:
                 print("Convergence reached.")
                 break
@@ -319,7 +320,7 @@ class image_plane_correction_minor_cycle():
 
         mgain_threshold = abs(peak_value) * (1.0 - self.settings['mgain'])
         first_threshold = mgain_threshold
-                       
+        
         
 
         iteration_number=0
