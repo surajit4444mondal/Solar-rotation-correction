@@ -1,0 +1,7 @@
+pyproject.toml
+src/deterministic_corrections_major_cycles.egg-info/PKG-INFO
+src/deterministic_corrections_major_cycles.egg-info/SOURCES.txt
+src/deterministic_corrections_major_cycles.egg-info/dependency_links.txt
+src/deterministic_corrections_major_cycles.egg-info/requires.txt
+src/deterministic_corrections_major_cycles.egg-info/top_level.txt
+tests/test_Region_selection.py

@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: deterministic_corrections_major_cycles
+Version: 0.1.0
+Summary: This module tries to correct deterministic effects in the image, like time-variable translation, rotatin, stretching etc. during the major cycle, ensuring that full SNR in the final image 
+Author-email: Surajit Mondal <surajit4444mondal@gmail.com>
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+Requires-Dist: requests
+Requires-Dist: wsclean
